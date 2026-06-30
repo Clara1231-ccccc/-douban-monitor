@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 豆瓣用户动态监控器
@@ -104,69 +103,85 @@ def fetch_via_rsshub():
 
 
 def fetch_via_scraping():
-    """方法二：直接爬取豆瓣页面（需要登录 Cookie，更可靠）"""
+    """方法二：直接爬取豆瓣页面（需要登录 Cookie）"""
     if not DOUBAN_COOKIE:
         print("⚠️  未设置豆瓣 Cookie，跳过直接爬取")
         return None
 
-    url = f"https://www.douban.com/people/{DOUBAN_USER_ID}/statuses"
-    headers = {**HEADERS, "Cookie": DOUBAN_COOKIE}
+    import feedparser
 
-    try:
-        print(f"📡 直接爬取: {url}")
-        resp = requests.get(url, headers=headers, timeout=30)
+    # 尝试多个 URL 和解析方式
+    urls = [
+        f"https://www.douban.com/people/{DOUBAN_USER_ID}/statuses",
+        f"https://m.douban.com/people/{DOUBAN_USER_ID}/statuses",
+    ]
 
-        if resp.status_code != 200:
-            print(f"   ↳ 豆瓣返回状态码 {resp.status_code}")
-            return None
+    for url in urls:
+        headers = {**HEADERS, "Cookie": DOUBAN_COOKIE}
+        try:
+            print(f"📡 直接爬取: {url}")
+            resp = requests.get(url, headers=headers, timeout=30)
 
-        # 用正则提取动态 ID 和内容（比 BeautifulSoup 轻量，不需要额外安装）
-        # 豆瓣动态页每个条目通常有类似 data-status-id="xxxx" 的属性
-        ids = re.findall(r'data-status-id=["\'](\d+)["\']', resp.text)
-        contents = re.findall(
-            r'class="status-content[^"]*"[^>]*>([\s\S]*?)</div>', resp.text
-        )
+            print(f"   ↳ 状态码: {resp.status_code}, 响应长度: {len(resp.text)}")
+            if resp.status_code != 200:
+                print(f"   ↳ 跳过")
+                continue
 
-        if not ids:
-            # 尝试另一种匹配模式
+            # 检查是否返回了登录页面
+            if "登录" in resp.text[:500] or "注册" in resp.text[:500]:
+                print("⚠️  返回了登录页，Cookie 可能无效或过期")
+                continue
+
+            # 方法 1：匹配 data-status-id
+            ids = re.findall(r'data-status-id=["\'](\d+)["\']', resp.text)
+            if ids:
+                print(f"   ↳ 方式1匹配到 {len(ids)} 个动态")
+                break
+
+            # 方法 2：匹配 /status/数字/
             ids = re.findall(r'/status/(\d+)/', resp.text)
-            # 去重并保留顺序
             seen = set()
             ids = [x for x in ids if not (x in seen or seen.add(x))]
+            if ids:
+                print(f"   ↳ 方式2匹配到 {len(ids)} 个动态")
+                break
 
-        if not ids:
-            print("⚠️  解析页面未找到动态，可能是页面结构变了或 Cookie 失效")
-            return None
+            # 方法 3：匹配 status_id 变量
+            ids = re.findall(r'"id":\s*(\d+)', resp.text)
+            if ids:
+                print(f"   ↳ 方式3匹配到 {len(ids)} 个动态")
+                break
 
-        # 取最新的 20 条
-        ids = ids[:20]
-        result = []
-        for i, sid in enumerate(ids):
-            content = contents[i] if i < len(contents) else ""
-            result.append(
-                {
-                    "id": sid,
-                    "title": f"豆瓣动态",
-                    "content": strip_html(content),
-                    "link": f"https://www.douban.com/people/{DOUBAN_USER_ID}/status/{sid}/",
-                    "published": "",
-                }
-            )
+        except Exception as e:
+            print(f"   ↳ 爬取出错: {e}")
+            continue
 
-        # 去重（同一个页面可能有多个地方出现同一个 ID）
-        seen = set()
-        unique_result = []
-        for item in result:
-            if item["id"] not in seen:
-                seen.add(item["id"])
-                unique_result.append(item)
-
-        print(f"✅ 直接爬取成功，获取到 {len(unique_result)} 条动态")
-        return unique_result
-
-    except Exception as e:
-        print(f"⚠️  直接爬取失败: {e}")
+    # 所有 URL 都试过了
+    if not ids:
+        print(f"⚠️  所有方式都未解析到动态，页面前200字: {resp.text[:200]}")
         return None
+
+    # 去重取前20
+    seen = set()
+    ids = [x for x in ids if not (x in seen or seen.add(x))][:20]
+
+    # 提取内容（如果有）
+    ptn = r'class="status-content[^"]*"[^>]*>([\s\S]*?)</div>'
+    contents = re.findall(ptn, resp.text)
+
+    result = []
+    for i, sid in enumerate(ids):
+        content = contents[i] if i < len(contents) else ""
+        result.append({
+            "id": sid,
+            "title": "豆瓣动态",
+            "content": strip_html(content),
+            "link": f"https://www.douban.com/people/{DOUBAN_USER_ID}/status/{sid}/",
+            "published": "",
+        })
+
+    print(f"✅ 直接爬取成功，获取到 {len(result)} 条动态")
+    return result
 
 
 def fetch_statuses():
