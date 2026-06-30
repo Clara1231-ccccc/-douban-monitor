@@ -108,83 +108,98 @@ def fetch_via_scraping():
         print("⚠️  未设置豆瓣 Cookie，跳过直接爬取")
         return None
 
-    import feedparser
+    headers = {**HEADERS, "Cookie": DOUBAN_COOKIE}
+    results = []
 
-    # 尝试多个 URL 和解析方式
-    urls = [
-        f"https://www.douban.com/people/{DOUBAN_USER_ID}/statuses",
-        f"https://m.douban.com/people/{DOUBAN_USER_ID}/statuses",
+    # 豆瓣动态是通过 API 异步加载的，模拟其请求
+    api_url = "https://www.douban.com/j/people/{}/statuses"
+    api_urls = [
+        api_url.format(DOUBAN_USER_ID),
+        f"https://www.douban.com/people/{DOUBAN_USER_ID}/statuses?p=1",
     ]
 
-    for url in urls:
-        headers = {**HEADERS, "Cookie": DOUBAN_COOKIE}
+    for url in api_urls:
         try:
-            print(f"📡 直接爬取: {url}")
+            print(f"📡 尝试: {url}")
             resp = requests.get(url, headers=headers, timeout=30)
+            print(f"   ↳ 状态码: {resp.status_code}, 长度: {len(resp.text)}")
 
-            print(f"   ↳ 状态码: {resp.status_code}, 响应长度: {len(resp.text)}")
             if resp.status_code != 200:
-                print(f"   ↳ 跳过")
                 continue
 
-            # 检查是否返回了登录页面
-            if "登录" in resp.text[:500] or "注册" in resp.text[:500]:
-                print("⚠️  返回了登录页，Cookie 可能无效或过期")
-                continue
+            # 尝试解析 JSON（豆瓣 j/ 路径可能返回 JSON）
+            try:
+                data = resp.json()
+                if isinstance(data, dict) and "items" in data:
+                    items = data["items"]
+                elif isinstance(data, list):
+                    items = data
+                else:
+                    items = []
 
-            # 方法 1：匹配 data-status-id
-            ids = re.findall(r'data-status-id=["\'](\d+)["\']', resp.text)
-            if ids:
-                print(f"   ↳ 方式1匹配到 {len(ids)} 个动态")
-                break
+                for item in items:
+                    sid = str(item.get("id", ""))
+                    content = strip_html(item.get("text", item.get("content", "")))
+                    if sid:
+                        results.append({
+                            "id": sid,
+                            "title": "豆瓣动态",
+                            "content": content,
+                            "link": f"https://www.douban.com/people/{DOUBAN_USER_ID}/status/{sid}/",
+                        })
+                if results:
+                    print(f"✅ API JSON 解析成功，获取到 {len(results)} 条动态")
+                    return results
+            except (json.JSONDecodeError, TypeError):
+                pass
 
-            # 方法 2：匹配 /status/数字/
+            # 如果不是 JSON，尝试从 HTML 中找动态
             ids = re.findall(r'/status/(\d+)/', resp.text)
             seen = set()
             ids = [x for x in ids if not (x in seen or seen.add(x))]
             if ids:
-                print(f"   ↳ 方式2匹配到 {len(ids)} 个动态")
-                break
-
-            # 方法 3：匹配 status_id 变量
-            ids = re.findall(r'"id":\s*(\d+)', resp.text)
-            if ids:
-                print(f"   ↳ 方式3匹配到 {len(ids)} 个动态")
-                break
+                ids = ids[:20]
+                for sid in ids:
+                    results.append({
+                        "id": sid,
+                        "title": "豆瓣动态",
+                        "content": "",
+                        "link": f"https://www.douban.com/people/{DOUBAN_USER_ID}/status/{sid}/",
+                    })
+                print(f"✅ HTML 解析成功，获取到 {len(results)} 条动态")
+                return results
 
         except Exception as e:
-            print(f"   ↳ 爬取出错: {e}")
+            print(f"   ↳ 出错: {e}")
             continue
 
-    # 所有 URL 都试过了
-    if not ids:
-        # 打印页面 body 的关键部分，帮调试
-        body_start = resp.text.find("<body")
-        snippet = resp.text[body_start:body_start + 800] if body_start > 0 else resp.text[:800]
-        print(f"⚠️  所有方式都未解析到动态，页面片段: {snippet}")
-        return None
+    # 最终方案：用豆瓣的 Atom/RSS feed（如果用户开启了）
+    feed_url = f"https://www.douban.com/feed/people/{DOUBAN_USER_ID}/statuses"
+    try:
+        print(f"📡 尝试 RSS Feed: {feed_url}")
+        resp = requests.get(feed_url, headers=headers, timeout=30)
+        if resp.status_code == 200:
+            import feedparser
+            feed = feedparser.parse(resp.content)
+            for entry in feed.entries:
+                sid = entry.get("id", entry.get("link", ""))
+                sid = sid.rstrip("/").split("/")[-1] if sid else ""
+                content = strip_html(entry.get("summary", entry.get("description", "")))
+                if sid and sid.isdigit():
+                    results.append({
+                        "id": sid,
+                        "title": "豆瓣动态",
+                        "content": content,
+                        "link": entry.get("link", ""),
+                    })
+            if results:
+                print(f"✅ RSS Feed 解析成功，获取到 {len(results)} 条动态")
+                return results
+    except Exception as e:
+        print(f"   ↳ 出错: {e}")
 
-    # 去重取前20
-    seen = set()
-    ids = [x for x in ids if not (x in seen or seen.add(x))][:20]
-
-    # 提取内容（如果有）
-    ptn = r'class="status-content[^"]*"[^>]*>([\s\S]*?)</div>'
-    contents = re.findall(ptn, resp.text)
-
-    result = []
-    for i, sid in enumerate(ids):
-        content = contents[i] if i < len(contents) else ""
-        result.append({
-            "id": sid,
-            "title": "豆瓣动态",
-            "content": strip_html(content),
-            "link": f"https://www.douban.com/people/{DOUBAN_USER_ID}/status/{sid}/",
-            "published": "",
-        })
-
-    print(f"✅ 直接爬取成功，获取到 {len(result)} 条动态")
-    return result
+    print(f"⚠️  所有方式都解析失败")
+    return None
 
 
 def fetch_statuses():
