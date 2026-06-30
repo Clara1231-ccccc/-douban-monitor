@@ -1,0 +1,50 @@
+```yaml
+# 豆瓣动态监控 — GitHub Actions 定时任务
+name: 豆瓣动态监控
+
+on:
+  schedule:
+    # 每 30 分钟运行一次（cron 表达式 = 分钟 小时 日 月 星期）
+    - cron: '*/30 * * * *'
+  workflow_dispatch:      # 允许手动触发
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安装依赖
+        run: |
+          pip install requests feedparser
+
+      - name: 运行监控脚本
+        env:
+          DOUBAN_USER_ID: ${{ secrets.DOUBAN_USER_ID }}
+          SERVERCHAN_SENDKEY: ${{ secrets.SERVERCHAN_SENDKEY }}
+          DOUBAN_COOKIE: ${{ secrets.DOUBAN_COOKIE }}
+        run: python monitor.py
+
+      - name: 保存监控状态
+        uses: actions/cache@v4
+        with:
+          path: state.json
+          key: douban-state-${{ secrets.DOUBAN_USER_ID }}
+          restore-keys: |
+            douban-state-
+
+      - name: 提交更新 state.json
+        run: |
+          git config user.name "douban-bot"
+          git config user.email "douban-bot@github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "📝 更新监控状态 $(date '+%Y-%m-%d %H:%M')"
+          git push
+```
