@@ -173,30 +173,32 @@ def fetch_via_scraping():
             print(f"   ↳ 出错: {e}")
             continue
 
-    # 最终方案：用豆瓣的 Atom/RSS feed（如果用户开启了）
-    feed_url = f"https://www.douban.com/feed/people/{DOUBAN_USER_ID}/statuses"
+    # 最终方案：在页面中搜索 API 地址和 JSON 数据
     try:
-        print(f"📡 尝试 RSS Feed: {feed_url}")
-        resp = requests.get(feed_url, headers=headers, timeout=30)
-        if resp.status_code == 200:
-            import feedparser
-            feed = feedparser.parse(resp.content)
-            for entry in feed.entries:
-                sid = entry.get("id", entry.get("link", ""))
-                sid = sid.rstrip("/").split("/")[-1] if sid else ""
-                content = strip_html(entry.get("summary", entry.get("description", "")))
-                if sid and sid.isdigit():
-                    results.append({
-                        "id": sid,
-                        "title": "豆瓣动态",
-                        "content": content,
-                        "link": entry.get("link", ""),
-                    })
-            if results:
-                print(f"✅ RSS Feed 解析成功，获取到 {len(results)} 条动态")
-                return results
+        desktop_url = f"https://www.douban.com/people/{DOUBAN_USER_ID}/statuses"
+        resp = requests.get(desktop_url, headers=headers, timeout=30)
+        html = resp.text
+
+        # 找所有 script 标签里的内容
+        scripts = re.findall(r'<script[^>]*>([\s\S]*?)</script>', html)
+        for i, script in enumerate(scripts):
+            if 'status' in script.lower() or 'api' in script.lower() or 'url' in script.lower():
+                print(f"   ↳ script[{i}] 包含关键词片段:\n{script[:500]}\n---")
+                break
+        else:
+            # 没找到，打印页面中可能包含数据的部分
+            idx = html.find('status') or html.find('statuses') or html.find('status_list')
+            if idx > 0:
+                print(f"   ↳ 找到 status 关键词位置，附近内容:\n{html[max(0,idx-100):idx+300]}")
+            else:
+                print(f"   ↳ 未找到 status 关键词，尝试搜 id 或 list...")
+                for kw in ['"list"', '"items"', '"data"', '"content"', 'window.__']:
+                    idx = html.find(kw)
+                    if idx > 0:
+                        print(f"   ↳ 找到 '{kw}' 在位置 {idx}:\n{html[idx:idx+300]}")
+                        break
     except Exception as e:
-        print(f"   ↳ 出错: {e}")
+        print(f"   ↳ 搜索出错: {e}")
 
     print(f"⚠️  所有方式都解析失败")
     return None
