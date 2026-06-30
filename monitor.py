@@ -57,47 +57,48 @@ def strip_html(text):
 
 def fetch_via_rsshub():
     """方法一：通过 RSSHub 获取（无需 Cookie）"""
-    # RSSHub 的豆瓣用户动态 JSON 接口
-    url = f"https://rsshub.app/douban/user/{DOUBAN_USER_ID}/status"
-    # 也尝试不带 /status 的路由
-    url2 = f"https://rsshub.app/douban/user/{DOUBAN_USER_ID}"
+    # RSSHub 的豆瓣用户动态路由，多个镜像轮流尝试
+    bases = [
+        "https://rsshub.app",
+        "https://rsshub.sku.moe",
+        "https://rsshub.bili.xyz",
+    ]
 
-    for feed_url in [url, url2]:
-        try:
-            print(f"📡 尝试 RSSHub: {feed_url}")
-            resp = requests.get(feed_url, headers=HEADERS, timeout=30)
+    for base in bases:
+        for path in [f"/douban/user/{DOUBAN_USER_ID}/status", f"/douban/user/{DOUBAN_USER_ID}"]:
+            url = f"{base}{path}"
+            try:
+                print(f"📡 尝试 RSSHub: {url}")
+                resp = requests.get(url, headers=HEADERS, timeout=30)
 
-            if resp.status_code != 200:
-                print(f"   ↳ 状态码 {resp.status_code}，跳过")
+                if resp.status_code != 200:
+                    print(f"   ↳ 状态码 {resp.status_code}，跳过")
+                    continue
+
+                import feedparser
+                feed = feedparser.parse(resp.content)
+                if not feed.entries:
+                    print(f"   ↳ 无条目，跳过")
+                    continue
+
+                print(f"✅ RSSHub 成功，获取到 {len(feed.entries)} 条动态")
+                result = []
+                for entry in feed.entries:
+                    desc = entry.get("summary", "") or entry.get("description", "")
+                    result.append(
+                        {
+                            "id": entry.get("id", "") or entry.get("link", ""),
+                            "title": entry.get("title", "豆瓣动态"),
+                            "content": strip_html(desc),
+                            "link": entry.get("link", ""),
+                            "published": entry.get("published", ""),
+                        }
+                    )
+                return result
+
+            except Exception as e:
+                print(f"   ↳ 出错: {e}")
                 continue
-
-            # RSSHub 返回的是 RSS XML，用 feedparser 解析
-            import feedparser
-
-            feed = feedparser.parse(resp.content)
-            if not feed.entries:
-                print(f"   ↳ 无条目，跳过")
-                continue
-
-            print(f"✅ RSSHub 成功，获取到 {len(feed.entries)} 条动态")
-            result = []
-            for entry in feed.entries:
-                # 取 HTML 描述并转纯文本
-                desc = entry.get("summary", "") or entry.get("description", "")
-                result.append(
-                    {
-                        "id": entry.get("id", "") or entry.get("link", ""),
-                        "title": entry.get("title", "豆瓣动态"),
-                        "content": strip_html(desc),
-                        "link": entry.get("link", ""),
-                        "published": entry.get("published", ""),
-                    }
-                )
-            return result
-
-        except Exception as e:
-            print(f"   ↳ 出错: {e}")
-            continue
 
     return None
 
@@ -259,4 +260,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
