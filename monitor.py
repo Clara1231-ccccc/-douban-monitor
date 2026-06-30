@@ -158,7 +158,10 @@ def fetch_via_scraping():
 
     # 所有 URL 都试过了
     if not ids:
-        print(f"⚠️  所有方式都未解析到动态，页面前200字: {resp.text[:200]}")
+        # 打印页面 body 的关键部分，帮调试
+        body_start = resp.text.find("<body")
+        snippet = resp.text[body_start:body_start + 800] if body_start > 0 else resp.text[:800]
+        print(f"⚠️  所有方式都未解析到动态，页面片段: {snippet}")
         return None
 
     # 去重取前20
