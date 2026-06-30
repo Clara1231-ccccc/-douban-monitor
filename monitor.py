@@ -1,4 +1,4 @@
-```python
+
 #!/usr/bin/env python3
 """
 豆瓣用户动态监控器
@@ -259,4 +259,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
+
